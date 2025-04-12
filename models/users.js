@@ -18,7 +18,7 @@ const userSchema = new mongoose.Schema({
     },
     passwordHash: {
         type: String,
-        required: true,
+        required: false,
     },
     phone: {
         type: String,
@@ -27,7 +27,7 @@ const userSchema = new mongoose.Schema({
     role: {
         type: String,
         enum: ['user', 'admin', 'seller'],
-        default: User,
+        default: 'user',
     },
     marketLocation: {
         type: String,
@@ -57,7 +57,23 @@ const userSchema = new mongoose.Schema({
         type: String,
         default: '',
         required: true,
-    }
+    },
+    isVerified: {
+        type: Boolean,
+        default: false,
+    },
+    verificationCode: {
+        type: String,
+        default: null,
+    },
+    otp: {
+        type: String,
+        default: null,
+    },
+    otpExpiry: {
+        type: Date,
+        default: null,
+    },
 
 });
 
@@ -69,5 +85,23 @@ userSchema.set('toJSON', {
     virtuals: true,
 });
 
+const userOTPVerificationSchema = new mongoose.Schema({
+    email: {
+        type: String,
+        required: true,
+        unique: true,
+    },
+    otp: {
+        type: String,
+        required: true,
+    },
+    expiryTime: {
+        type: Date,
+        required: true,
+    },
+});
+
 exports.User = mongoose.model('User', userSchema);
+exports.UserOTPVerification = mongoose.model('UserOTPVerification', userOTPVerificationSchema);
 exports.userSchema = userSchema;
+exports.userOTPVerificationSchema = userOTPVerificationSchema;
