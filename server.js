@@ -15,10 +15,10 @@ app.use(express.json());
 app.use(morgan('tiny'));
 
 //routes
-const productsRoutes = require('../routers/products');
-const usersRoutes = require('../routers/users');
-const categoryRoutes = require('../routers/categories');
-const ordersRoutes = require('../routers/orders');
+const productsRoutes = require('./routers/products');
+const usersRoutes = require('./routers/users');
+const categoryRoutes = require('./routers/categories');
+const ordersRoutes = require('./routers/orders');
 const cartRoutes = require('./routers/cart');
 
 const api = process.env.API_URL;
@@ -42,5 +42,6 @@ mongoose.connect(process.env.MONGO_URI, {
   console.error('MongoDB connection error:', err);
 });
 
-module.exports = app;
-module.exports.handler = serverless(app);
+app.listen(process.env.PORT || 3000, () => {
+  console.log(`Server is running on port ${process.env.PORT || 3000}`);
+});
