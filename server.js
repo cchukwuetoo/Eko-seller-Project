@@ -4,6 +4,7 @@ const morgan = require('morgan');
 const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv/config');
+const serverless = require('serverless-http');
 
 app.use(cors());
 app.options('/{*any}', cors());
@@ -41,7 +42,5 @@ mongoose.connect(process.env.MONGO_URI, {
   console.error('MongoDB connection error:', err);
 });
 
-//Server
-app.listen(3000, () => {
-  console.log('Server is running on port 3000');
-});
+module.exports = app;
+module.exports.handler = serverless(app);

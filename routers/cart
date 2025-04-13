@@ -1,0 +1,432 @@
+const express = require('express');
+const router = express.Router();
+const { Cart, CartItem } = require('../models/cart');
+const { Order } = require('../models/orders');
+const { Product } = require('../models/products');
+const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
+
+// Authentication middleware
+const auth = (req, res, next) => {
+  try {
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.error('Auth middleware error:', error);
+    res.status(401).json({ success: false, message: 'Authentication failed' });
+  }
+};
+
+// Admin authorization middleware
+const userAuth = (req, res, next) => {
+  if (req.user.role !== 'user') {
+    return res.status(403).json({ success: false, message: 'Access denied. User privileges required' });
+  }
+  next();
+};
+
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
+
+router.get('/', auth, userAuth, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        
+        let cart = await Cart.findOne({ user: userId })
+            .populate({
+                path: 'items',
+                populate: {
+                    path: 'product',
+                    select: 'name images price description'
+                }
+            });
+        
+        if (!cart) {
+            // Create a new cart if user doesn't have one
+            cart = new Cart({
+                user: userId,
+                items: [],
+                totalPrice: 0
+            });
+            await cart.save();
+        }
+        
+        res.status(200).send(cart);
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+//add item to cart
+router.post('/add-item', auth, userAuth, async(req, res) => {
+    try {
+        const { productId, quantity } = req.body;
+        const userId = req.user.userId;
+        
+        if (!mongoose.isValidObjectId(productId)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid product ID' 
+            });
+        }
+        
+        // Find the product to get its price
+        const product = await Product.findById(productId);
+        if (!product) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Product not found' 
+            });
+        }
+        
+        // Find user's cart or create a new one
+        let cart = await Cart.findOne({ user: userId });
+        if (!cart) {
+            cart = new Cart({
+                user: userId,
+                items: [],
+                totalPrice: 0
+            });
+        }
+        
+        // Check if the product is already in the cart
+        const existingCartItemIds = cart.items;
+        const existingCartItems = await CartItem.find({
+            _id: { $in: existingCartItemIds },
+            product: productId
+        });
+        
+        if (existingCartItems.length > 0) {
+            // Update existing cart item
+            const existingCartItem = existingCartItems[0];
+            existingCartItem.quantity += quantity;
+            existingCartItem.price = product.price;
+            await existingCartItem.save();
+        } else {
+            // Create new cart item
+            let newCartItem = new CartItem({
+                product: productId,
+                quantity: quantity,
+                price: product.price
+            });
+            
+            newCartItem = await newCartItem.save();
+            cart.items.push(newCartItem._id);
+        }
+        
+        // Calculate total price
+        const cartItemsIds = cart.items;
+        const cartItems = await CartItem.find({ _id: { $in: cartItemsIds } })
+            .populate('product', 'price');
+        
+        const totalPrice = cartItems.reduce((sum, item) => {
+            return sum + (item.quantity * item.price);
+        }, 0);
+        
+        cart.totalPrice = totalPrice;
+        cart.lastUpdated = Date.now();
+        
+        await cart.save();
+        
+        // Return updated cart with populated items
+        const updatedCart = await Cart.findById(cart._id)
+            .populate({
+                path: 'items',
+                populate: {
+                    path: 'product',
+                    select: 'name images price description'
+                }
+            });
+        
+        res.status(200).send(updatedCart);
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+//update cart item quantity
+router.put('/update-item/:itemId', auth, userAuth, async (req, res) => {
+    try {
+        const { itemId } = req.params;
+        const { quantity } = req.body;
+        const userId = req.user.userId;
+        
+        if (!mongoose.isValidObjectId(itemId)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid cart item ID' 
+            });
+        }
+        
+        if (quantity <= 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Quantity must be greater than zero' 
+            });
+        }
+        
+        // Find user's cart
+        const cart = await Cart.findOne({ user: userId });
+        if (!cart) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Cart not found' 
+            });
+        }
+        
+        // Check if the item belongs to the user's cart
+        if (!cart.items.includes(itemId)) {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'This item does not belong to your cart' 
+            });
+        }
+        
+        // Update the cart item
+        const cartItem = await CartItem.findById(itemId);
+        cartItem.quantity = quantity;
+        await cartItem.save();
+        
+        // Update total price
+        const cartItemsIds = cart.items;
+        const cartItems = await CartItem.find({ _id: { $in: cartItemsIds } })
+            .populate('product', 'price');
+        
+        const totalPrice = cartItems.reduce((sum, item) => {
+            return sum + (item.quantity * item.price);
+        }, 0);
+        
+        cart.totalPrice = totalPrice;
+        cart.lastUpdated = Date.now();
+        
+        await cart.save();
+        
+        // Return updated cart
+        const updatedCart = await Cart.findById(cart._id)
+            .populate({
+                path: 'items',
+                populate: {
+                    path: 'product',
+                    select: 'name images price description'
+                }
+            });
+        
+        res.status(200).send(updatedCart);
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+//remove item from cart
+router.delete('/remove-item/:itemId', auth, userAuth, async (req, res) => {
+    try {
+        const { itemId } = req.params;
+        const userId = req.user.userId;
+        
+        if (!mongoose.isValidObjectId(itemId)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid cart item ID' 
+            });
+        }
+        
+        // Find user's cart
+        const cart = await Cart.findOne({ user: userId });
+        if (!cart) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Cart not found' 
+            });
+        }
+        
+        // Check if the item belongs to the user's cart
+        if (!cart.items.includes(itemId)) {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'This item does not belong to your cart' 
+            });
+        }
+        
+        // Remove the item from the cart
+        cart.items = cart.items.filter(item => item.toString() !== itemId);
+        
+        // Delete the cart item
+        await CartItem.findByIdAndDelete(itemId);
+        
+        // Update total price
+        const cartItemsIds = cart.items;
+        const cartItems = await CartItem.find({ _id: { $in: cartItemsIds } })
+            .populate('product', 'price');
+        
+        const totalPrice = cartItems.reduce((sum, item) => {
+            return sum + (item.quantity * item.price);
+        }, 0);
+        
+        cart.totalPrice = totalPrice;
+        cart.lastUpdated = Date.now();
+        
+        await cart.save();
+        
+        // Return updated cart
+        const updatedCart = await Cart.findById(cart._id)
+            .populate({
+                path: 'items',
+                populate: {
+                    path: 'product',
+                    select: 'name images price description'
+                }
+            });
+        
+        res.status(200).send(updatedCart);
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+//convert cart to order
+router.post('/checkout', auth, userAuth, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const { shippingAddress1, shippingAddress2, state, zip, country, phone } = req.body;
+        
+        // Validate required shipping information
+        if (!shippingAddress1 || !state || !zip || !country || !phone) {
+            return res.status(400).json({
+                success: false,
+                message: 'Shipping information is incomplete'
+            });
+        }
+        
+        // Find user's cart
+        const cart = await Cart.findOne({ user: userId })
+            .populate({
+                path: 'items',
+                populate: {
+                    path: 'product',
+                    select: 'name price countInStock'
+                }
+            });
+            
+        if (!cart || cart.items.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cart is empty'
+            });
+        }
+        
+        // Check product availability
+        for (const item of cart.items) {
+            if (item.product.countInStock < item.quantity) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Product ${item.product.name} has insufficient stock`
+                });
+            }
+        }
+        // Calculate order total
+    let totalAmount = 0;
+    const orderItems = cart.items.map(item => {
+      const itemTotal = item.quantity * item.product.price;
+      totalAmount += itemTotal;
+      
+      return {
+        product: item.product._id,
+        name: item.product.name,
+        quantity: item.quantity,
+        price: item.product.price
+      }
+    });
+
+    // Create payment intent with Stripe
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(totalAmount * 100), // Stripe requires amount in cents
+      currency: 'ngn',
+      payment_method: paymentMethodId,
+      confirm: true,
+      return_url: `${process.env.FRONTEND_URL}/order-confirmation`,
+    });
+
+    // If payment is successful
+    if (paymentIntent.status === 'succeeded') {
+      // Create a new order
+      const newOrder = new Order({
+        user: userId,
+        orderItems,
+        shippingAddress: {
+          address1: shippingAddress1,
+          address2: shippingAddress2 || '',
+          city,
+          zip,
+          country,
+          phone
+        },
+        paymentMethod: 'Stripe',
+        paymentResult: {
+          id: paymentIntent.id,
+          status: paymentIntent.status,
+          update_time: Date.now(),
+          email_address: req.user.email // Assuming email is available in the user object
+        },
+        taxPrice: 0, // You can calculate tax if needed
+        shippingPrice: 0, // You can calculate shipping cost if needed
+        totalPrice: totalAmount,
+        isPaid: true,
+        paidAt: Date.now()
+    });
+
+      // Save the order
+      const savedOrder = await newOrder.save();
+
+      // Update product stock
+      for (const item of cart.items) {
+        await Product.findByIdAndUpdate(
+            item.product._id,
+            { $inc: { countInStock: -item.quantity } }
+         );
+      }
+
+      // Clear the cart
+      await Cart.findByIdAndUpdate(cart._id, { $set: { items: [] } });
+
+      // Return success response
+      return res.status(200).json({
+        success: true,
+        message: 'Payment successful and order created',
+        order: savedOrder
+      });
+    } else {
+      // Payment intent was created but not succeeded
+      return res.status(400).json({
+        success: false,
+        message: 'Payment processing failed',
+        paymentStatus: paymentIntent.status
+      });
+    }
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+})
+
+module.exports = router;
