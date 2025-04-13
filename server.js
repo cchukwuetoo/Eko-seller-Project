@@ -17,11 +17,15 @@ app.use(morgan('tiny'));
 const productsRoutes = require('./routers/products');
 const usersRoutes = require('./routers/users');
 const categoryRoutes = require('./routers/categories');
+const ordersRoutes = require('./routers/orders');
+const cartRoutes = require('./routers/cart');
 
 const api = process.env.API_URL;
 app.use(`${api}/products`, productsRoutes);
 app.use(`${api}/users`, usersRoutes);
 app.use(`${api}/categories`, categoryRoutes);
+app.use(`${api}/orders`, ordersRoutes);
+app.use(`${api}/cart`, cartRoutes);
 
 
 //Database

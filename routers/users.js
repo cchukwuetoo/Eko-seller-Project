@@ -34,14 +34,6 @@ const adminAuth = (req, res, next) => {
   next();
 };
 
-// Seller authorization middleware
-const isSeller = (req, res, next) => {
-  if (req.user.role !== 'seller' && req.user.role !== 'admin') {
-    return res.status(403).json({ success: false, message: 'Access denied. Seller privileges required' });
-  }
-  next();
-};
-
 
 const otpRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -55,6 +47,7 @@ const otpRateLimiter = rateLimit({
 //Email configuration
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
+  secure: true,
   port: process.env.SMTP_PORT,
   auth: {
     user: process.env.EMAIL_USER,
